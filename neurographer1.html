@@ -1,0 +1,206 @@
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+	
+	<body>
+		<script src="js/three.min.js"></script>
+		<script src="js/TrackballControls.js"></script>
+		<script src="lapicque1.js"></script>
+		<script>
+			var container;
+			var camera, controls, scene, projector, renderer;
+			var neurones=[],edges=[],plane;
+			var mouse = new THREE.Vector2(), offset = new THREE.Vector3(),INTERSECTED, SELECTED;
+			var	ctx,buffer=[],t=0;
+			var lastSelected;
+
+			init();
+			animate();
+			reset();
+
+			function init() {
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+				camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 10000 );
+				camera.position.z = 3000;
+				controls = new THREE.TrackballControls( camera );
+				scene = new THREE.Scene();
+				scene.add( new THREE.AmbientLight( 0x505050 ) );
+				var light = new THREE.SpotLight( 0xffffff, 1.5 );
+				light.position.set( 0, 500, 2000 );
+				scene.add( light );			
+				plane = new THREE.Mesh( new THREE.PlaneGeometry( 2000, 2000, 8, 8 ), new THREE.MeshBasicMaterial( { color: 0x000000, opacity: 0.25, transparent: true, wireframe: true } ) );
+				plane.visible = false;
+				scene.add( plane );
+				projector = new THREE.Projector();
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.sortObjects = false;
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+				
+				var info = document.createElement( 'div' );
+				info.style.position = 'absolute';
+				info.style.top = '10px';
+				info.style.width = '100%';
+				info.style.textAlign = 'center';
+				info.innerHTML = '<button onclick="javascript:addNeuroneRandom()">Add Neurone</button>\
+								  <button onclick="javascript:addNeuroneGrid()">Add Grid</button>\
+								  <button onclick="javascript:autoWire()">Autowire</button>\
+								  <button onclick="javascript:unWire()">Unwire</button>\
+								  <button onclick="javascript:reset()">Reset</button>';
+				container.appendChild( info );
+				
+				var raster=document.createElement('div');
+				raster.style.position='absolute';
+				raster.style.bottom='10px';
+				raster.style.textAlign='center';
+				raster.innerHTML='<canvas id="myCanvas" width="400" height="100" style="border:1px solid #000"></canvas>';
+				container.appendChild(raster);
+				ctx=document.getElementById("myCanvas").getContext("2d");
+				ctx.save();
+				
+				renderer.domElement.addEventListener( 'mousemove', onDocumentMouseMove, false );
+				renderer.domElement.addEventListener( 'mousedown', onDocumentMouseDown, false );
+				renderer.domElement.addEventListener( 'mouseup', onDocumentMouseUp, false );
+				window.addEventListener( 'resize', onWindowResize, false );
+			}
+
+			function addNeurone(x,y,z) {
+				var geometry = new THREE.CubeGeometry(50,50,50);
+				var neurone = new THREE.Mesh( geometry, new THREE.MeshLambertMaterial( { color: 0xffffff } ) );
+				//var v=new THREE.Vector3(Math.random() * 1000 - 500,Math.random() * 600 - 300,Math.random() * 600 - 300);
+				var v=new THREE.Vector3(x,y,z);
+				neurone.material.ambient = neurone.material.color;
+				neurone.position=v;
+				neurone.state=A*Math.random();
+				neurone.output=0;
+				neurone.material.color.r=
+				neurone.material.color.g=
+				neurone.material.color.b=neurone.state/A;
+				neurone.edgelist=[];
+				neurone.neighbours=[];
+				scene.add( neurone );
+				neurones.push( neurone );
+				
+				return neurone;
+			}
+			function wireNeurones(n1,n2) {
+				var geometry = new THREE.Geometry();
+				geometry.vertices.push(n1.position);
+				geometry.vertices.push(n2.position);
+				var line = new THREE.Line(geometry, new THREE.LineBasicMaterial({color: 0x555555, linewidth: 2}));
+				scene.add(line);
+				n1.edgelist.push(line);
+				n2.edgelist.push(line);
+				edges.push(line);
+			}
+			function unWire() {
+				for(i=0;i<edges.length;i++)
+					scene.remove(edges[i]);
+				edges.length=0;
+				for(i=0;i<neurones.length;i++)
+				{
+					neurones[i].neighbours.length=0;
+					neurones[i].edgelist.length=0;
+				}
+					
+			}
+			function raster() {
+				if(lastSelected) {
+					ctx.fillStyle="white";
+					ctx.fillRect(0,0,400,100);
+					ctx.beginPath();
+					ctx.moveTo(0,0);
+					for(i=0;i<200;i++)
+						ctx.lineTo(2*i,50-buffer[i]);
+					ctx.moveTo(2*t,0);
+					ctx.lineTo(2*t,100);
+					ctx.stroke();
+
+					if(lastSelected.output==0)
+						buffer[t]=lastSelected.state;
+					else
+						buffer[t]=A;
+					t++;
+					if(t==200)
+						t=0;
+				}
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+			function onDocumentMouseDown( event ) {
+				event.preventDefault();
+				var vector = new THREE.Vector3( mouse.x, mouse.y, 0.5 );
+				projector.unprojectVector( vector, camera );
+				var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+				var intersects = raycaster.intersectObjects( neurones );
+				if ( intersects.length > 0 ) {
+					controls.enabled = false;
+					lastSelected=SELECTED = intersects[ 0 ].object;
+					var intersects = raycaster.intersectObject( plane );
+					offset.copy( intersects[ 0 ].point ).sub( plane.position );
+					container.style.cursor = 'move';
+				}
+			}
+			function onDocumentMouseMove( event )
+			{
+				event.preventDefault();
+				mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+				mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+				var vector = new THREE.Vector3( mouse.x, mouse.y, 0.5 );
+				projector.unprojectVector( vector, camera );
+				var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+				if ( SELECTED ) {
+					var intersects = raycaster.intersectObject( plane );
+					SELECTED.position.copy( intersects[0].point.sub( offset ) );
+					for(i=0;i<SELECTED.edgelist.length;i++)
+						SELECTED.edgelist[i].geometry.verticesNeedUpdate = true;
+					return;
+				}
+				var intersects = raycaster.intersectObjects( neurones );
+				if ( intersects.length > 0 ) {
+					if ( INTERSECTED != intersects[ 0 ].object ) {
+						if ( INTERSECTED ) INTERSECTED.material.color.setHex( INTERSECTED.currentHex );
+						INTERSECTED = intersects[0].object;
+						INTERSECTED.currentHex = INTERSECTED.material.color.getHex();
+						plane.position.copy( INTERSECTED.position );
+						plane.lookAt( camera.position );
+					}
+					container.style.cursor = 'pointer';
+				} else {
+					if ( INTERSECTED ) INTERSECTED.material.color.setHex( INTERSECTED.currentHex );
+					INTERSECTED = null;
+					container.style.cursor = 'auto';
+				}
+			}
+			function onDocumentMouseUp( event ) {
+				event.preventDefault();
+				controls.enabled = true;
+				if ( INTERSECTED ) {
+					plane.position.copy( INTERSECTED.position );
+					SELECTED = null;
+				}
+				container.style.cursor = 'auto';
+			}
+
+			function animate() {
+				requestAnimationFrame( animate );
+				lapicque();
+				raster();
+				render();
+			}
+			function render() {
+				controls.update();
+				renderer.render( scene, camera );
+			}
+
+		</script>
+	</body>
+</html>

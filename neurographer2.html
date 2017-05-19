@@ -1,0 +1,314 @@
+<html>
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+</head>
+	
+	<body>
+		<div id="logdiv" style="display:none"></div>
+		<a style="display:none" id="downloadLink">Download</a>
+		
+		<script src="js/three.min.js"></script>
+		<script src="js/TrackballControls.js"></script>
+		<script src="lapicque2.js"></script>
+		<script>
+			var container;
+			var camera, controls, scene, projector, renderer;
+			var neurones=[],edges=[],plane;
+			var mouse = new THREE.Vector2(), offset = new THREE.Vector3(),INTERSECTED, SELECTED;
+			var	ctx,buffer_pre=[],buffer_post=[],t=0;
+			var pre,post;
+			var	time=0;
+			
+			var	logd=document.getElementById('logdiv');
+
+			init();
+			animate();
+			reset();
+
+			function init() {
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+				camera = new THREE.PerspectiveCamera( 30, window.innerWidth / window.innerHeight, 1, 10000 );
+				camera.position.z = 3000;
+				controls = new THREE.TrackballControls( camera );
+				scene = new THREE.Scene();
+				scene.add( new THREE.AmbientLight( 0x505050 ) );
+				var light = new THREE.SpotLight( 0xffffff, 1.5 );
+				light.position.set( 0, 500, 2000 );
+				scene.add( light );			
+				plane = new THREE.Mesh( new THREE.PlaneGeometry( 2000, 2000, 8, 8 ), new THREE.MeshBasicMaterial( { color: 0x000000, opacity: 0.25, transparent: true, wireframe: true } ) );
+				plane.visible = false;
+				scene.add( plane );
+				projector = new THREE.Projector();
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.sortObjects = false;
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+				
+				var info = document.createElement( 'div' );
+				info.style.position = 'absolute';
+				info.style.top = '10px';
+				info.style.width = '100%';
+				info.style.textAlign = 'center';
+				info.innerHTML = '<button onclick="javascript:addNeuroneRandom()">Add Neurone</button>\
+								  <button onclick="javascript:addNeuroneGrid()">Add Grid</button>\
+								  <button onclick="javascript:wire()">Wire</button>\
+								  <button onclick="javascript:autoWire()">Autowire</button>\
+								  <button onclick="javascript:unWire()">Unwire</button>\
+								  <button onclick="javascript:unWireAll()">Unwire All</button>\
+								  <button onclick="javascript:force()">Force</button>\
+								  <button onclick="javascript:saveLog()">SaveLog</button>\
+								  <button onclick="javascript:reset()">Reset</button>';
+				container.appendChild( info );
+				
+				var raster=document.createElement('div');
+				raster.style.position='absolute';
+				raster.style.bottom='10px';
+				raster.style.textAlign='center';
+				raster.innerHTML='<canvas id="myCanvas" width="400" height="100" style="border:1px solid #000"></canvas>';
+				container.appendChild(raster);
+				ctx=document.getElementById("myCanvas").getContext("2d");
+				ctx.save();
+				
+				renderer.domElement.addEventListener( 'mousemove', onDocumentMouseMove, false );
+				renderer.domElement.addEventListener( 'mousedown', onDocumentMouseDown, false );
+				renderer.domElement.addEventListener( 'mouseup', onDocumentMouseUp, false );
+				window.addEventListener( 'resize', onWindowResize, false );
+			}
+
+			function addNeurone(x,y,z) {
+				var geometry = new THREE.CubeGeometry(50,50,50);
+				var neurone = new THREE.Mesh( geometry, new THREE.MeshLambertMaterial( { color: 0xffffff } ) );
+				//var v=new THREE.Vector3(Math.random() * 1000 - 500,Math.random() * 600 - 300,Math.random() * 600 - 300);
+				var v=new THREE.Vector3(x,y,z);
+				neurone.material.ambient = neurone.material.color;
+				neurone.position=v;
+				neurone.state=A*Math.random();
+				neurone.output=0;
+				neurone.material.color.r=
+				neurone.material.color.g=
+				neurone.material.color.b=neurone.state/A;
+				neurone.edgelist=[];
+				neurone.weights=[];
+				neurone.neighbours=[];
+				scene.add( neurone );
+				neurones.push( neurone );
+				
+				return neurone;
+			}
+			function wireNeurones(n1,n2,w) {
+				var geometry = new THREE.Geometry();
+				geometry.vertices.push(n1.position);
+				geometry.vertices.push(n2.position);
+				var line = new THREE.Line(geometry, new THREE.LineBasicMaterial({color: 0x555555, linewidth: 2}));
+				scene.add(line);
+				n1.edgelist.push(line);
+				n2.edgelist.push(line);
+				n1.weights.push(w);
+				n2.weights.push(w);
+				edges.push(line);
+			}
+			function unWireAll() {
+				for(i=0;i<edges.length;i++)
+					scene.remove(edges[i]);
+				edges.length=0;
+				for(i=0;i<neurones.length;i++)
+				{
+					neurones[i].neighbours.length=0;
+					neurones[i].edgelist.length=0;
+					neurones[i].weights.length=0;
+				}
+					
+			}
+			function unWire() {
+				if(pre && post)
+				{
+					i=pre.neighbours.indexOf(post);
+					j=post.neighbours.indexOf(pre);
+					if(i>=0)
+					{
+						scene.remove(pre.edgelist[i]);
+						edges.splice(edges.indexOf(pre.edgelist[i]),1);
+						
+						pre.neighbours.splice(i,1);
+						pre.edgelist.splice(i,1);
+						pre.weights.splice(i,1);
+
+						post.neighbours.splice(j,1);
+						post.edgelist.splice(j,1);
+						post.weights.splice(j,1);
+					}					
+				}
+			}
+			function raster() {
+				// clear raster
+				ctx.fillStyle="white";
+				ctx.fillRect(0,0,400,100);
+
+				ctx.beginPath();
+
+				ctx.moveTo(2*150,0);      ctx.lineTo(2*150,100);
+				ctx.moveTo(2*(150+25),0); ctx.lineTo(2*(150+25),60);
+				ctx.moveTo(2*150,60);     ctx.lineTo(2*200,60);
+
+				// draw post raster
+				if(post) {
+					ctx.moveTo(0,0);
+					for(i=0;i<150;i++)
+						ctx.lineTo(2*i,50-buffer_post[i]);
+					if(post.output==0) {
+						buffer_post[t]=post.state;
+					}
+					else {
+						buffer_post[t]=A;
+    					//logd.innerHTML = time+',A <br />'+logd.innerHTML;
+					}
+				}
+				else
+					buffer_post[t]=0;
+					
+				// draw pre raster
+				if(pre) {
+					ctx.moveTo(0,0);
+					for(i=0;i<150;i++)
+						ctx.lineTo(2*i,40+50-buffer_pre[i]);
+					if(pre.output==0) {
+						buffer_pre[t]=pre.state;
+					}
+					else {
+						buffer_pre[t]=A;
+    					//logd.innerHTML = time+',B <br />'+logd.innerHTML;
+					}
+				}
+				else
+					buffer_pre[t]=0;
+
+				// draw time
+				ctx.moveTo(2*t,0);
+				ctx.lineTo(2*t,100);
+				t++;
+				if(t==150) t=0;
+				
+				ctx.stroke();
+
+				// draw coincidence
+				if(buffer_pre[t] && buffer_post[t])
+					logd.innerHTML+=time+','+buffer_pre[t]+','+buffer_post[t]+'\n';
+				ctx.fillStyle="black";
+				for(i=0;i<150;i++)
+					if(buffer_pre[i]==A)
+					{
+						if(buffer_post[i]>vthr/2.0)
+							ctx.fillRect(2*(150+25+2*(Math.min(vthr,buffer_post[i])-vthr)),i*55/150.0,5,5);
+						else
+							ctx.fillRect(2*(150+25+2*Math.min(vthr,buffer_post[i])),i*55/150.0,5,5);
+					}
+				
+				// draw post-pre and pre-post weights
+				if(post && pre) {
+					i=post.neighbours.indexOf(pre);
+					ctx.fillStyle="red";
+					ctx.fillRect(2*150,60,post.weights[i],20);
+					i=pre.neighbours.indexOf(post);
+					ctx.fillStyle="green";
+					ctx.fillRect(2*150,80,pre.weights[i],20);
+				}
+
+				// force pre to predict post
+				if(flagForce)
+					ctx.fillRect(0,0,10,10);
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+			function onDocumentMouseDown( event ) {
+				event.preventDefault();
+				var vector = new THREE.Vector3( mouse.x, mouse.y, 0.5 );
+				projector.unprojectVector( vector, camera );
+				var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+				var intersects = raycaster.intersectObjects( neurones );
+				if ( intersects.length > 0 ) {
+					controls.enabled = false;
+					SELECTED = intersects[ 0 ].object;
+					if(post!=SELECTED)
+					{
+						pre=post;
+						post=SELECTED;
+					}
+					var intersects = raycaster.intersectObject( plane );
+					offset.copy( intersects[ 0 ].point ).sub( plane.position );
+					container.style.cursor = 'move';
+				}
+			}
+			function onDocumentMouseMove( event )
+			{
+				event.preventDefault();
+				mouse.x = ( event.clientX / window.innerWidth ) * 2 - 1;
+				mouse.y = - ( event.clientY / window.innerHeight ) * 2 + 1;
+				var vector = new THREE.Vector3( mouse.x, mouse.y, 0.5 );
+				projector.unprojectVector( vector, camera );
+				var raycaster = new THREE.Raycaster( camera.position, vector.sub( camera.position ).normalize() );
+				if ( SELECTED ) {
+					var intersects = raycaster.intersectObject( plane );
+					SELECTED.position.copy( intersects[0].point.sub( offset ) );
+					for(i=0;i<SELECTED.edgelist.length;i++)
+						SELECTED.edgelist[i].geometry.verticesNeedUpdate = true;
+					return;
+				}
+				var intersects = raycaster.intersectObjects( neurones );
+				if ( intersects.length > 0 ) {
+					if ( INTERSECTED != intersects[ 0 ].object ) {
+						if ( INTERSECTED ) INTERSECTED.material.color.setHex( INTERSECTED.currentHex );
+						INTERSECTED = intersects[0].object;
+						INTERSECTED.currentHex = INTERSECTED.material.color.getHex();
+						plane.position.copy( INTERSECTED.position );
+						plane.lookAt( camera.position );
+					}
+					container.style.cursor = 'pointer';
+				} else {
+					if ( INTERSECTED ) INTERSECTED.material.color.setHex( INTERSECTED.currentHex );
+					INTERSECTED = null;
+					container.style.cursor = 'auto';
+				}
+			}
+			function onDocumentMouseUp( event ) {
+				event.preventDefault();
+				controls.enabled = true;
+				if ( INTERSECTED ) {
+					plane.position.copy( INTERSECTED.position );
+					SELECTED = null;
+				}
+				container.style.cursor = 'auto';
+			}
+
+			function animate() {
+				requestAnimationFrame( animate );
+				lapicque();
+				raster();
+				render();
+				time++;
+			}
+			function render() {
+				controls.update();
+				renderer.render( scene, camera );
+			}
+			function saveLog() {
+				console.log("save Log");
+				var fileName =  'log.txt';
+				var elHtml = document.getElementById('logdiv').innerHTML;
+				var link = document.getElementById('downloadLink');
+				mimeType = '';
+
+				link.setAttribute('download', fileName);
+				link.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(elHtml));
+				link.click(); 
+			}
+
+		</script>
+	</body>
+</html>
